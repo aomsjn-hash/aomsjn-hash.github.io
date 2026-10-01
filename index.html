@@ -1,196 +1,601 @@
-const SHEET_ID = '1vME8fdOtbDmAcoK-uZBdCDgcJ_mcz_J751GfcThvTQo';
-const SHEET_NAME = 'PetData';
-const PHOTO_FOLDER_ID = '1t4C1JwuyJ50Yu4bkiAeGnK3HQQj2QaGG'; // โฟลเดอร์ PetPhoto ใน Google Drive
-
-// ใช้เฉพาะตอนชีตว่างเปล่า (ไม่มีหัวคอลัมน์เลย)
-const DEFAULT_HEADERS = [
-  'petName', 'species', 'age', 'weight', 'condition', 'allergy', 'other',
-  'photoUrl', 'username', 'phone', 'address'
-];
-
-// ทำให้ชื่อหัวคอลัมน์เทียบกันได้ เช่น "Photo URL" / "photoUrl" -> "photourl"
-function norm(s) {
-  return String(s).toLowerCase().replace(/[^a-z]/g, '');
-}
-
-// เบอร์โทร: เก็บเฉพาะตัวเลข และตัด 0 นำหน้า เพื่อเทียบกันได้
-function phoneKey(p) {
-  return String(p || '').replace(/\D/g, '').replace(/^0+/, '');
-}
-
-function jsonOut(obj, callback) {
-  const text = JSON.stringify(obj);
-  if (callback && /^[\w.$]+$/.test(callback)) {
-    // JSONP: ให้หน้าเว็บอ่านข้อมูลได้โดยไม่ติด CORS
-    return ContentService.createTextOutput(callback + '(' + text + ')')
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pet Data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sky-top: #cfeefb;
+    --sky-bottom: #e4f7fd;
+    --grass: #c5e6a6;
+    --frame: #8bb8e8;
+    --avatar-bg: #1a2c2d;
+    --avatar-ring: #9ad6d9;
+    --ink: #111;
+    --line: #b9c4cc;
+    --accent: #5aa9d6;
+    --accent-dark: #3f8fbf;
   }
-  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
-}
-
-// ----- อ่านข้อมูล: ?action=profile&username=...&phone=... -----
-function doGet(e) {
-  const p = (e && e.parameter) || {};
-  if (p.action === 'profile') {
-    try {
-      return jsonOut(getProfile(p.username, p.phone), p.callback);
-    } catch (err) {
-      return jsonOut({ ok: false, error: String(err) }, p.callback);
-    }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  [hidden] { display: none !important; }
+  body {
+    font-family: "Prompt", system-ui, sans-serif;
+    color: var(--ink);
+    min-height: 100dvh;
+    background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 55%, #d9f2fb 100%);
+    background-attachment: fixed;
+    position: relative;
+    overflow-x: hidden;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  return ContentService.createTextOutput('PetData API is running');
-}
+  /* cloud */
+  body::before {
+    content: "";
+    position: fixed;
+    right: -120px; top: 250px;
+    width: 640px; height: 120px;
+    background: #e3f9ff;
+    border-radius: 50%;
+    opacity: .85;
+    filter: blur(1px);
+    z-index: 0;
+  }
+  /* grass */
+  .grass {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 30vh; min-height: 180px;
+    background: var(--grass);
+    z-index: 0;
+  }
+  .grass::before {
+    content: "";
+    position: absolute; left: 0; right: 0; top: -28px; height: 56px;
+    background: var(--grass);
+    border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  }
+  .grass i {
+    position: absolute;
+    width: 14px; height: 38px; border-radius: 8px;
+    background: rgba(255,255,255,.28);
+    transform: rotate(8deg);
+  }
 
-function getProfile(username, phone) {
-  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return { ok: true, owner: null, pets: [] };
+  .page {
+    position: relative; z-index: 1;
+    width: 100%; max-width: 520px;
+    margin: 0 auto;
+    padding: 28px 18px 56px;
+  }
 
-  const values = sheet.getDataRange().getDisplayValues();
-  const headers = values[0].map(norm);
-  const col = function () {
-    for (let i = 0; i < arguments.length; i++) {
-      const idx = headers.indexOf(arguments[i]);
-      if (idx !== -1) return idx;
-    }
-    return -1;
-  };
-  const c = {
-    petName: col('petname', 'petsname'),
-    species: col('species'),
-    age: col('age', 'ages'),
-    weight: col('weight'),
-    condition: col('condition', 'underlyingcondition'),
-    allergy: col('allergy', 'drugallergy'),
-    other: col('other'),
-    photo: col('photourl', 'photo'),
-    username: col('username'),
-    phone: col('phone', 'phonenumber'),
-    address: col('address')
-  };
-  const get = (row, i) => (i === -1 ? '' : String(row[i] || '').trim());
+  /* profile header (shared by both views) */
+  .profile {
+    display: flex; align-items: center; gap: 14px;
+    margin-top: 8px;
+  }
+  .avatar {
+    flex: none;
+    width: 88px; height: 88px; border-radius: 50%;
+    background: var(--avatar-bg);
+    border: 4px solid var(--avatar-ring);
+    display: grid; place-items: center;
+    overflow: hidden;
+  }
+  .profile-fields { flex: 1; min-width: 0; }
+  .row {
+    display: flex; align-items: baseline; gap: 6px;
+    font-size: 17px; line-height: 1.5;
+  }
+  .row label { flex: none; white-space: nowrap; }
+  .row input, .row textarea {
+    flex: 1; min-width: 0;
+    font: inherit; color: inherit;
+    background: transparent;
+    border: 0; border-bottom: 1px dashed transparent;
+    padding: 0 2px; outline: none; resize: none;
+  }
+  .row input::placeholder, .row textarea::placeholder { color: rgba(0,0,0,.35); }
+  .row input:hover, .row textarea:hover { border-bottom-color: var(--line); }
+  .row input:focus, .row textarea:focus { border-bottom: 1px solid var(--accent-dark); }
+  .row.addr { align-items: flex-start; }
+  .row textarea { min-height: 1.5em; overflow: hidden; }
+  .info { font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
 
-  const wantUser = String(username || '').trim().toLowerCase();
-  const wantPhone = phoneKey(phone);
-  if (!wantUser || !wantPhone) return { ok: false, error: 'missing username or phone' };
+  /* photo upload */
+  .photo-wrap { margin: 30px auto 22px; width: min(62%, 260px); }
+  .photo {
+    position: relative;
+    display: block; width: 100%;
+    aspect-ratio: 2 / 2.62;
+    border: 7px solid var(--frame);
+    background: rgba(214, 243, 252, .85);
+    padding: 0; cursor: pointer; overflow: hidden;
+    font: inherit;
+  }
+  .photo .strip {
+    position: absolute; left: 0; right: 4%; top: 2%;
+    height: 12%;
+    background: #e4fdff;
+    display: grid; place-items: center;
+    font-size: 13px; color: #5d8ca3;
+  }
+  .photo svg.plus { position: absolute; left: 50%; top: 53%; width: 86%; transform: translate(-50%,-50%); }
+  .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+  .photo.has-img img { display: block; }
+  .photo.has-img svg.plus, .photo.has-img .strip { display: none; }
+  .photo:focus-visible { outline: 3px solid var(--accent-dark); outline-offset: 3px; }
+  .photo-clear {
+    display: none; margin: 8px auto 0; background: none; border: 0;
+    font: inherit; font-size: 13px; color: #35657e; text-decoration: underline; cursor: pointer;
+  }
+  .photo-clear.show { display: block; }
 
-  const pets = [];
-  let owner = null;
-  for (let r = 1; r < values.length; r++) {
-    const row = values[r];
-    if (get(row, c.username).toLowerCase() !== wantUser) continue;
-    if (phoneKey(get(row, c.phone)) !== wantPhone) continue;
-    if (!get(row, c.petName)) continue;
+  /* pet card (form) */
+  .card {
+    background: #fff;
+    padding: 20px 22px 18px 38px;
+  }
+  .card .row { padding: 1px 0; }
+  .unit { flex: none; color: #555; }
 
-    const addr = get(row, c.address);
-    owner = {
-      username: get(row, c.username),
-      phone: get(row, c.phone),
-      address: addr && addr !== '-' ? addr : (owner ? owner.address : '')
-    };
+  /* submit */
+  .actions { margin-top: 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .submit {
+    font: inherit; font-weight: 500; font-size: 17px;
+    background: var(--accent); color: #fff;
+    border: 0; border-radius: 999px;
+    padding: 12px 44px; cursor: pointer;
+    min-width: 180px;
+    transition: background .15s, transform .1s;
+  }
+  .submit:hover { background: var(--accent-dark); }
+  .submit:active { transform: scale(.97); }
+  .submit:disabled { background: #9db9c8; cursor: progress; }
+  .submit:focus-visible { outline: 3px solid #fff; outline-offset: 3px; box-shadow: 0 0 0 6px var(--accent-dark); }
+  .status {
+    min-height: 1.5em; font-size: 15px; text-align: center;
+    padding: 4px 14px; border-radius: 10px;
+  }
+  .status.ok { background: #fff; color: #1f6b3a; }
+  .status.err { background: #fff; color: #b3261e; }
+  .link {
+    background: none; border: 0; padding: 4px 6px;
+    font: inherit; font-size: 15px; color: #1f5f80;
+    text-decoration: underline; cursor: pointer;
+  }
+  .link:focus-visible { outline: 3px solid var(--accent-dark); outline-offset: 2px; }
 
-    // แปลงลิงก์ไฟล์ใน Drive เป็นลิงก์รูปย่อที่แสดงในหน้าเว็บได้
-    let photo = '';
-    const url = get(row, c.photo);
-    const m = url.match(/\/d\/([-\w]+)/) || url.match(/[?&]id=([-\w]+)/);
-    if (m) photo = 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w800';
+  /* profile view: pet grid */
+  .pstatus {
+    margin: 18px auto 0; width: fit-content; max-width: 100%;
+    font-size: 15px; text-align: center;
+    padding: 6px 16px; border-radius: 12px; background: #fff;
+  }
+  .pstatus.err { color: #b3261e; }
+  .pstatus.warn { color: #8a5a00; }
+  .pstatus.loading { color: #35657e; }
+  .grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 26px 10px; margin-top: 22px;
+  }
+  .pet .ph {
+    width: 82%; margin: 0 auto;
+    aspect-ratio: 235 / 309;
+    background: rgba(255,255,255,.6);
+    overflow: hidden; display: grid; place-items: center;
+  }
+  .pet .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pet .ph svg { width: 46%; opacity: .55; }
+  .pet .txt {
+    margin-top: 8px; padding-left: 2px;
+    font-size: 15px; line-height: 1.55; overflow-wrap: anywhere;
+  }
+  .addbtn {
+    display: grid; place-items: center;
+    width: 82%; margin: 0 auto; aspect-ratio: 235 / 309;
+    background: none; border: 0; padding: 0; cursor: pointer;
+  }
+  .addbtn .circle {
+    width: 90%; aspect-ratio: 1; border-radius: 50%;
+    background: #000; display: grid; place-items: center;
+    transition: transform .12s;
+  }
+  .addbtn:hover .circle { transform: scale(1.04); }
+  .addbtn:active .circle { transform: scale(.96); }
+  .addbtn:focus-visible { outline: 3px solid var(--accent-dark); outline-offset: 4px; }
+  .addbtn svg { width: 58%; }
+  .addcap { text-align: center; margin-top: 8px; font-size: 15px; }
+  .pactions { margin-top: 26px; display: flex; justify-content: center; gap: 14px; }
 
-    pets.push({
-      name: get(row, c.petName),
-      species: get(row, c.species),
-      age: get(row, c.age),
-      weight: get(row, c.weight),
-      condition: get(row, c.condition),
-      allergy: get(row, c.allergy),
-      other: get(row, c.other),
-      photo: photo
+  @media (min-width: 520px) {
+    .row, .info { font-size: 18px; }
+    .avatar { width: 100px; height: 100px; }
+    .pet .txt { font-size: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="grass" aria-hidden="true">
+  <i style="left:8%;top:34%"></i><i style="left:30%;top:46%"></i><i style="left:58%;top:30%;height:46px"></i>
+  <i style="left:86%;top:24%"></i><i style="left:4%;top:74%"></i><i style="left:44%;top:78%"></i><i style="left:92%;top:70%"></i>
+</div>
+
+<main class="page">
+
+  <!-- ===== หน้ากรอกข้อมูล ===== -->
+  <section id="formView">
+    <form id="petForm" autocomplete="off" novalidate>
+
+      <section class="profile">
+        <div class="avatar" aria-hidden="true">
+          <svg viewBox="0 0 100 100" width="100%" height="100%">
+            <circle cx="50" cy="38" r="15" fill="#fff"/>
+            <path d="M20 88c2-18 14-28 30-28s28 10 30 28z" fill="#fff"/>
+          </svg>
+        </div>
+        <div class="profile-fields">
+          <div class="row"><label for="username">Username :</label><input id="username" name="username" placeholder="xxxxxx" required></div>
+          <div class="row"><label for="phone">Phone Number :</label><input id="phone" name="phone" type="tel" inputmode="tel" placeholder="xxxxxxx" required></div>
+          <div class="row addr"><label for="address">Address :</label><textarea id="address" name="address" rows="1" placeholder=""></textarea></div>
+        </div>
+      </section>
+
+      <div class="photo-wrap">
+        <button type="button" class="photo" id="photoBtn" aria-label="Add pet photo">
+          <span class="strip">Pet photo</span>
+          <svg class="plus" viewBox="0 0 200 200" aria-hidden="true">
+            <circle cx="100" cy="100" r="92" fill="none" stroke="#72c8e4" stroke-width="9"/>
+            <rect x="84" y="46" width="32" height="108" rx="16" fill="#72c8e4"/>
+            <rect x="46" y="84" width="108" height="32" rx="16" fill="#72c8e4"/>
+          </svg>
+          <img id="photoPreview" alt="Pet photo preview">
+        </button>
+        <button type="button" class="photo-clear" id="photoClear">Remove photo</button>
+        <input type="file" id="photoInput" accept="image/*" hidden>
+      </div>
+
+      <section class="card">
+        <div class="row"><label for="petName">Pet's Name:</label><input id="petName" name="petName" required></div>
+        <div class="row"><label for="species">Species:</label><input id="species" name="species" list="speciesList"></div>
+        <datalist id="speciesList"><option value="Dog"><option value="Cat"><option value="Rabbit"><option value="Hamster"><option value="Bird"><option value="Fish"><option value="Reptile"></datalist>
+        <div class="row"><label for="age">Ages:</label><input id="age" name="age" placeholder="e.g. 2 years 3 months"></div>
+        <div class="row"><label for="weight">Weight:</label><input id="weight" name="weight" type="number" step="0.01" min="0" inputmode="decimal"><span class="unit">kg</span></div>
+        <div class="row"><label for="condition">Underlying Condition:</label><input id="condition" name="condition" placeholder="-"></div>
+        <div class="row"><label for="allergy">Drug Allergy:</label><input id="allergy" name="allergy" placeholder="-"></div>
+        <div class="row"><label for="other">Other:</label><input id="other" name="other" placeholder="-"></div>
+      </section>
+
+      <div class="actions">
+        <button class="submit" id="submitBtn" type="submit">Save</button>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+        <button type="button" class="link" id="viewBtn">ดูโปรไฟล์ที่มีอยู่แล้ว (ใช้ Username + Phone ด้านบน)</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ===== หน้าโปรไฟล์ (ดึงจาก Google Sheet) ===== -->
+  <section id="profileView" hidden>
+    <section class="profile">
+      <div class="avatar" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="100%" height="100%">
+          <circle cx="50" cy="38" r="15" fill="#fff"/>
+          <path d="M20 88c2-18 14-28 30-28s28 10 30 28z" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="profile-fields">
+        <div class="info">Username : <span id="pUser"></span></div>
+        <div class="info">Phone Number : <span id="pPhone"></span></div>
+        <div class="info">Address : <span id="pAddress"></span></div>
+      </div>
+    </section>
+
+    <div class="pstatus" id="pStatus" role="status" aria-live="polite" hidden></div>
+    <div class="grid" id="petGrid"></div>
+
+    <div class="pactions">
+      <button type="button" class="link" id="refreshBtn">รีเฟรชข้อมูล</button>
+      <button type="button" class="link" id="backBtn">กลับไปหน้ากรอกข้อมูล</button>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  // ====== วาง URL ของ Google Apps Script Web App ตรงนี้ ======
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxCInwl10dT-JTGtN7T0m1JpTEKXNbkjNAOER0izninJWCkN09efmpl0iqf5YEZTiUcQQ/exec";
+  // ===========================================================
+
+  const $ = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const form = $("petForm");
+  const statusEl = $("status");
+  let photoData = ""; // base64 JPEG (without prefix)
+
+  /* ---------- helpers ---------- */
+  const digits = (p) => String(p).replace(/\D/g, "").replace(/^0+/, "");
+  const keyOf = (u, p) => u.trim().toLowerCase() + "|" + digits(p);
+  const counts = {}; // จำนวนสัตว์เลี้ยงล่าสุดของแต่ละโปรไฟล์
+  let current = { username: "", phone: "" };
+
+  function showView(name) {
+    $("formView").hidden = name !== "form";
+    $("profileView").hidden = name !== "profile";
+    window.scrollTo(0, 0);
+  }
+
+  // อ่านข้อมูลจาก Apps Script แบบ JSONP (ไม่ติด CORS)
+  function jsonp(params, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const cb = "cb_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
+      const s = document.createElement("script");
+      let timer = null;
+      const done = () => { clearTimeout(timer); delete window[cb]; s.remove(); };
+      window[cb] = (data) => { done(); resolve(data); };
+      s.onerror = () => { done(); reject(new Error("load error")); };
+      timer = setTimeout(() => { done(); reject(new Error("timeout")); }, timeoutMs || 12000);
+      const qs = new URLSearchParams(Object.assign({}, params, { callback: cb, _: Date.now() }));
+      s.src = APPS_SCRIPT_URL + "?" + qs.toString();
+      document.head.appendChild(s);
     });
   }
-  return { ok: true, owner: owner, pets: pets };
-}
+  const fetchProfile = (u, p, t) => jsonp({ action: "profile", username: u, phone: p }, t);
 
-// ----- บันทึกข้อมูลจากฟอร์ม -----
-function doPost(e) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const d = JSON.parse(e.postData.contents);
+  /* ---------- form: address auto-grow ---------- */
+  const addr = $("address");
+  const grow = () => { addr.style.height = "auto"; addr.style.height = addr.scrollHeight + "px"; };
+  addr.addEventListener("input", grow);
 
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-    const sheet = ss.getSheetByName(SHEET_NAME) || ss.insertSheet(SHEET_NAME);
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(DEFAULT_HEADERS);
-      sheet.getRange(1, 1, 1, DEFAULT_HEADERS.length).setFontWeight('bold');
-      sheet.setFrozenRows(1);
-    }
-
-    let photoUrl = '';
-    if (d.photo) {
-      const blob = Utilities.newBlob(
-        Utilities.base64Decode(d.photo),
-        'image/jpeg',
-        (d.petName || 'pet') + '_' + Date.now() + '.jpg'
-      );
-      const folder = DriveApp.getFolderById(PHOTO_FOLDER_ID);
-      const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      photoUrl = file.getUrl();
-    }
-
-    // ข้อมูลที่ได้รับ จับคู่กับหัวคอลัมน์ในชีตตามชื่อ (ไม่สนลำดับคอลัมน์)
-    const data = {
-      timestamp: new Date(),
-      petname: d.petName,
-      species: d.species,
-      age: d.age,
-      ages: d.age,
-      weight: d.weight,
-      condition: d.condition,
-      underlyingcondition: d.condition,
-      allergy: d.allergy,
-      drugallergy: d.allergy,
-      other: d.other,
-      photourl: photoUrl,
-      photo: photoUrl,
-      username: d.username,
-      phone: d.phone,
-      phonenumber: d.phone,
-      address: d.address
+  /* ---------- form: photo picker + resize ---------- */
+  $("photoBtn").addEventListener("click", () => $("photoInput").click());
+  $("photoInput").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 800;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const dataUrl = c.toDataURL("image/jpeg", 0.75);
+      photoData = dataUrl.split(",")[1];
+      $("photoPreview").src = dataUrl;
+      $("photoBtn").classList.add("has-img");
+      $("photoClear").classList.add("show");
+      URL.revokeObjectURL(url);
     };
+    img.src = url;
+  });
+  $("photoClear").addEventListener("click", () => {
+    photoData = "";
+    $("photoInput").value = "";
+    $("photoPreview").removeAttribute("src");
+    $("photoBtn").classList.remove("has-img");
+    $("photoClear").classList.remove("show");
+  });
 
-    const lastCol = sheet.getLastColumn();
-    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(norm);
-    const row = headers.map(h => (data[h] !== undefined ? data[h] : ''));
-    const rowNum = sheet.getLastRow() + 1;
+  function show(msg, type) {
+    statusEl.textContent = msg;
+    statusEl.className = "status" + (type ? " " + type : "");
+  }
 
-    // ตั้งคอลัมน์เบอร์โทรเป็นข้อความ เพื่อให้เลข 0 ตัวแรกไม่หาย
-    headers.forEach((h, i) => {
-      if (h === 'phone' || h === 'phonenumber') {
-        sheet.getRange(rowNum, i + 1).setNumberFormat('@');
+  /* ---------- profile view ---------- */
+  const PAW = '<svg viewBox="0 0 64 64" aria-hidden="true"><g fill="#6aa9c4"><ellipse cx="32" cy="42" rx="14" ry="11"/><ellipse cx="14" cy="28" rx="6" ry="8"/><ellipse cx="26" cy="18" rx="6" ry="8"/><ellipse cx="38" cy="18" rx="6" ry="8"/><ellipse cx="50" cy="28" rx="6" ry="8"/></g></svg>';
+  const PLUS = '<svg viewBox="0 0 100 100" aria-hidden="true"><rect x="38" y="8" width="24" height="84" fill="#b9e5a5"/><rect x="8" y="38" width="84" height="24" fill="#b9e5a5"/></svg>';
+
+  function setPStatus(msg, type) {
+    const el = $("pStatus");
+    if (!msg) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = msg;
+    el.className = "pstatus " + (type || "");
+  }
+
+  function renderPets(pets) {
+    const grid = $("petGrid");
+    grid.textContent = "";
+
+    pets.forEach((p) => {
+      const card = document.createElement("article");
+      card.className = "pet";
+
+      const ph = document.createElement("div");
+      ph.className = "ph";
+      const showPlaceholder = () => { ph.textContent = ""; ph.insertAdjacentHTML("beforeend", PAW); };
+      if (p.photo) {
+        const img = document.createElement("img");
+        img.alt = "Photo of " + p.name;
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.onerror = showPlaceholder;
+        img.src = p.photo;
+        ph.appendChild(img);
+      } else {
+        showPlaceholder();
       }
+      card.appendChild(ph);
+
+      const txt = document.createElement("div");
+      txt.className = "txt";
+      [
+        ["Pet's Name", p.name],
+        ["Weight", p.weight],
+        ["Underlying Condition", p.condition],
+        ["Drug Allergy", p.allergy],
+        ["Other", p.other]
+      ].forEach(([label, value]) => {
+        const line = document.createElement("div");
+        line.textContent = label + ": " + (value || "-");
+        txt.appendChild(line);
+      });
+      card.appendChild(txt);
+      grid.appendChild(card);
     });
-    sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
 
-    return ContentService.createTextOutput(JSON.stringify({ ok: true }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(err) }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } finally {
-    lock.releaseLock();
+    // ปุ่ม + สำหรับเพิ่มสัตว์เลี้ยงตัวใหม่
+    const add = document.createElement("div");
+    add.className = "pet";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "addbtn";
+    btn.setAttribute("aria-label", "Add another pet");
+    const circle = document.createElement("span");
+    circle.className = "circle";
+    circle.insertAdjacentHTML("beforeend", PLUS);
+    btn.appendChild(circle);
+    btn.addEventListener("click", goAddPet);
+    add.appendChild(btn);
+    const cap = document.createElement("div");
+    cap.className = "addcap";
+    cap.textContent = "Add pet";
+    add.appendChild(cap);
+    grid.appendChild(add);
   }
-}
 
-// ใช้ทดสอบในหน้า Apps Script: เลือกฟังก์ชันนี้แล้วกด Run
-function testPost() {
-  const fake = { postData: { contents: JSON.stringify({
-    username: 'test', phone: '0812345678', address: 'test address',
-    petName: 'TestPet', species: 'Dog', age: '2 years', weight: '5 kg',
-    condition: '-', allergy: '-', other: '-', photo: ''
-  }) } };
-  Logger.log(doPost(fake).getContent());
-}
+  // expectAbove: ถ้าระบุ จะรอ (poll) จนกว่าจำนวนสัตว์เลี้ยงในชีตจะมากกว่าค่านี้ (ใช้หลังกด Save)
+  async function openProfile(username, phone, expectAbove) {
+    current = { username, phone };
+    $("pUser").textContent = username;
+    $("pPhone").textContent = phone;
+    $("pAddress").textContent = $("address").value.trim();
+    $("petGrid").textContent = "";
+    showView("profile");
+    setPStatus(expectAbove == null ? "กำลังโหลดข้อมูล..." : "กำลังบันทึกและโหลดข้อมูลจาก Google Sheet...", "loading");
 
-// ทดสอบการอ่านโปรไฟล์ (ดูผลใน Execution log)
-function testProfile() {
-  Logger.log(JSON.stringify(getProfile('test', '0812345678')));
-}
+    const waiting = expectAbove != null;
+    const maxTries = waiting ? 8 : 1;
+    let data = null, errors = 0, lastError = "";
+    for (let i = 0; i < maxTries; i++) {
+      if (waiting) await sleep(i === 0 ? 1500 : 2000);
+      try {
+        const res = await fetchProfile(username, phone, 10000);
+        if (!res || !res.ok) throw new Error((res && res.error) || "unknown error");
+        data = res; errors = 0;
+        if (!waiting || res.pets.length > expectAbove) break;
+      } catch (e) {
+        errors++; lastError = e.message;
+        if (errors >= 2 && !data) break;
+      }
+    }
+
+    if (!data) {
+      setPStatus("โหลดโปรไฟล์ไม่สำเร็จ (" + lastError + ") — ตรวจสอบว่า Deploy Apps Script เป็นเวอร์ชันใหม่แล้ว แล้วกดรีเฟรช", "err");
+      renderPets([]);
+      return;
+    }
+
+    counts[keyOf(username, phone)] = data.pets.length;
+    if (data.owner) {
+      $("pUser").textContent = data.owner.username || username;
+      $("pPhone").textContent = data.owner.phone || phone;
+      $("pAddress").textContent = data.owner.address || "";
+    }
+    renderPets(data.pets);
+
+    if (waiting && data.pets.length <= expectAbove) {
+      setPStatus("ข้อมูลล่าสุดยังไม่ขึ้น ลองกด \"รีเฟรชข้อมูล\" อีกครั้งในอีกสักครู่", "warn");
+    } else if (!data.pets.length) {
+      setPStatus("ยังไม่พบสัตว์เลี้ยงของโปรไฟล์นี้ (ตรวจสอบ Username และ Phone ว่าตรงกับที่เคยบันทึก)", "warn");
+    } else {
+      setPStatus("");
+    }
+  }
+
+  function goAddPet() {
+    showView("form");
+    show("");
+    $("petName").focus();
+  }
+
+  $("refreshBtn").addEventListener("click", () => openProfile(current.username, current.phone));
+  $("backBtn").addEventListener("click", goAddPet);
+
+  // ดูโปรไฟล์ที่มีอยู่แล้ว โดยไม่ต้องเพิ่มสัตว์เลี้ยง
+  $("viewBtn").addEventListener("click", () => {
+    const u = $("username").value.trim();
+    const p = $("phone").value.trim();
+    if (!u || !p) {
+      show("กรอก Username และ Phone Number ก่อน แล้วกดดูโปรไฟล์", "err");
+      (!u ? $("username") : $("phone")).focus();
+      return;
+    }
+    if (APPS_SCRIPT_URL.startsWith("PASTE_")) { show("ยังไม่ได้ใส่ URL ของ Apps Script", "err"); return; }
+    openProfile(u, p);
+  });
+
+  /* ---------- submit ---------- */
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const username = $("username").value.trim();
+    const phone = $("phone").value.trim();
+    const petName = $("petName").value.trim();
+    if (!username || !phone || !petName) {
+      show("กรุณากรอก Username, Phone Number และ Pet's Name", "err");
+      (!username ? $("username") : !phone ? $("phone") : $("petName")).focus();
+      return;
+    }
+    if (APPS_SCRIPT_URL.startsWith("PASTE_")) {
+      show("ยังไม่ได้ใส่ URL ของ Apps Script ในไฟล์ index.html", "err");
+      return;
+    }
+
+    const dash = (v) => v.trim() || "-";
+    const payload = {
+      username,
+      phone,
+      address: dash($("address").value),
+      petName,
+      species: dash($("species").value),
+      age: dash($("age").value),
+      weight: $("weight").value ? $("weight").value + " kg" : "-",
+      condition: dash($("condition").value),
+      allergy: dash($("allergy").value),
+      other: dash($("other").value),
+      photo: photoData
+    };
+
+    const btn = $("submitBtn");
+    btn.disabled = true; btn.textContent = "Saving...";
+    show("");
+    try {
+      // รู้จำนวนสัตว์เลี้ยงเดิมก่อน เพื่อรอจนกว่าตัวใหม่จะขึ้นในชีต
+      const k = keyOf(username, phone);
+      let before = counts[k];
+      if (before === undefined) {
+        try { before = (await fetchProfile(username, phone, 6000)).pets.length; }
+        catch (err) { before = 0; }
+      }
+
+      // no-cors: เบราว์เซอร์อ่านคำตอบกลับไม่ได้ แต่ข้อมูลถูกส่งไปถึง Apps Script ตามปกติ
+      await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+
+      // ล้างเฉพาะข้อมูลสัตว์เลี้ยง เก็บข้อมูลเจ้าของไว้
+      ["petName", "species", "age", "weight", "condition", "allergy", "other"].forEach((id) => { $(id).value = ""; });
+      $("photoClear").click();
+      grow();
+
+      openProfile(username, phone, before);
+    } catch (err) {
+      show("ส่งข้อมูลไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง", "err");
+    } finally {
+      btn.disabled = false; btn.textContent = "Save";
+    }
+  });
+</script>
+</body>
+</html>
