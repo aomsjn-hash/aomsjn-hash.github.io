@@ -213,6 +213,52 @@
   .addcap { text-align: center; margin-top: 8px; font-size: 15px; }
   .pactions { margin-top: 26px; display: flex; justify-content: center; gap: 14px; }
 
+
+  /* clickable pet cards */
+  .pet.clickable { cursor: pointer; }
+  .pet.clickable .ph { transition: outline-color .15s; outline: 3px solid transparent; outline-offset: 2px; }
+  .pet.clickable:hover .ph { outline-color: rgba(63,143,191,.55); }
+  .pet.clickable:focus-visible { outline: none; }
+  .pet.clickable:focus-visible .ph { outline-color: var(--accent-dark); }
+
+  /* pet detail view */
+  .petrow { display: flex; align-items: center; gap: 14px; margin-top: 24px; }
+  .pcircle {
+    flex: none; width: 84px; height: 84px; border-radius: 50%;
+    border: 4px solid #f6c49c; overflow: hidden;
+    background: rgba(255,255,255,.6); display: grid; place-items: center;
+  }
+  .pcircle img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pcircle svg { width: 46%; opacity: .55; }
+  .dtxt { flex: 1; min-width: 0; font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
+  .addsm {
+    flex: none; width: 62px; height: 62px; padding: 0; border: 0; border-radius: 50%;
+    background: #000; display: grid; place-items: center; cursor: pointer;
+    transition: transform .12s;
+  }
+  .addsm:hover { transform: scale(1.06); }
+  .addsm:active { transform: scale(.95); }
+  .addsm:focus-visible { outline: 3px solid var(--accent-dark); outline-offset: 3px; }
+  .addsm svg { width: 56%; }
+  .addsm svg rect { fill: #fff; }
+
+  .tablewrap { margin-top: 26px; overflow: auto; max-height: 330px; background: #fff; }
+  table.rec { border-collapse: collapse; width: 100%; min-width: 470px; font-size: 13.5px; }
+  table.rec th {
+    position: sticky; top: 0;
+    background: #97d0d3; font-weight: 400; text-align: left;
+    padding: 6px 6px; white-space: nowrap;
+  }
+  table.rec td {
+    border: 2px solid #000; background: #fff;
+    height: 42px; padding: 4px 6px; text-align: center; white-space: nowrap;
+  }
+  .chartbox {
+    margin-top: 28px; background: #fff;
+    border: 10px solid #77bcc0; padding: 10px 8px 6px; min-height: 230px;
+  }
+  .chartempty { padding: 80px 12px; text-align: center; color: #5b7077; font-size: 15px; }
+
   @media (min-width: 520px) {
     .row, .info { font-size: 18px; }
     .avatar { width: 100px; height: 100px; }
@@ -305,6 +351,47 @@
     </div>
   </section>
 
+  <!-- ===== หน้ารายละเอียดสัตว์เลี้ยง (ดึงจาก Google Sheet) ===== -->
+  <section id="petView" hidden>
+    <section class="profile">
+      <div class="avatar" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="100%" height="100%">
+          <circle cx="50" cy="38" r="15" fill="#fff"/>
+          <path d="M20 88c2-18 14-28 30-28s28 10 30 28z" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="profile-fields">
+        <div class="info">Username : <span id="dUser"></span></div>
+        <div class="info">Phone Number : <span id="dPhone"></span></div>
+        <div class="info">Address : <span id="dAddress"></span></div>
+      </div>
+    </section>
+
+    <div class="petrow">
+      <div class="pcircle" id="dPhoto"></div>
+      <div class="dtxt" id="dTxt"></div>
+      <button type="button" class="addsm" id="dAdd" aria-label="Add another pet"></button>
+    </div>
+
+    <div class="pstatus" id="dStatus" role="status" aria-live="polite" hidden></div>
+
+    <div class="tablewrap">
+      <table class="rec" id="recTable">
+        <thead><tr>
+          <th>SUMweight</th><th>L1Feet</th><th>R1Feet</th><th>diff1%</th><th>L2Feet</th><th>R2Feet</th><th>diff2%</th>
+        </tr></thead>
+        <tbody id="recBody"></tbody>
+      </table>
+    </div>
+
+    <div class="chartbox"><div id="chart"></div></div>
+
+    <div class="pactions">
+      <button type="button" class="link" id="dRefresh">รีเฟรชข้อมูล</button>
+      <button type="button" class="link" id="dBack">กลับไปหน้าโปรไฟล์</button>
+    </div>
+  </section>
+
 </main>
 
 <script>
@@ -327,6 +414,7 @@
   function showView(name) {
     $("formView").hidden = name !== "form";
     $("profileView").hidden = name !== "profile";
+    $("petView").hidden = name !== "pet";
     window.scrollTo(0, 0);
   }
 
@@ -406,7 +494,14 @@
 
     pets.forEach((p) => {
       const card = document.createElement("article");
-      card.className = "pet";
+      card.className = "pet clickable";
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", "Open " + p.name);
+      card.addEventListener("click", () => openPet(p));
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openPet(p); }
+      });
 
       const ph = document.createElement("div");
       ph.className = "ph";
@@ -531,6 +626,135 @@
     if (APPS_SCRIPT_URL.startsWith("PASTE_")) { show("ยังไม่ได้ใส่ URL ของ Apps Script", "err"); return; }
     openProfile(u, p);
   });
+
+  /* ---------- pet detail view ---------- */
+  let currentPet = null;
+  const REC_KEYS = ["sumweight", "l1feet", "r1feet", "diff1", "l2feet", "r2feet", "diff2"];
+
+  function setDStatus(msg, type) {
+    const el = $("dStatus");
+    if (!msg) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = msg;
+    el.className = "pstatus " + (type || "");
+  }
+
+  function renderRecords(records) {
+    const body = $("recBody");
+    body.textContent = "";
+    const rows = records.slice();
+    while (rows.length < 4) rows.push(null); // เหลือช่องว่างอย่างน้อย 4 แถวตามดีไซน์
+    rows.forEach((r) => {
+      const tr = document.createElement("tr");
+      REC_KEYS.forEach((k) => {
+        const td = document.createElement("td");
+        td.textContent = r ? (r[k] || "") : "";
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    drawChart(records);
+  }
+
+  // กราฟ diff1% / diff2% ตามลำดับการวัด
+  function drawChart(records) {
+    const box = $("chart");
+    box.textContent = "";
+    const num = (v) => {
+      const n = parseFloat(String(v).replace("%", "").replace(",", "."));
+      return isFinite(n) ? n : null;
+    };
+    const s1 = records.map((r) => num(r.diff1));
+    const s2 = records.map((r) => num(r.diff2));
+    const vals = s1.concat(s2).filter((v) => v !== null);
+    if (!vals.length) {
+      const m = document.createElement("div");
+      m.className = "chartempty";
+      m.textContent = "ยังไม่มีข้อมูล diff% สำหรับแสดงกราฟ";
+      box.appendChild(m);
+      return;
+    }
+    const W = 640, H = 300, L = 46, R = 16, T = 18, B = 46;
+    const min = Math.min(0, Math.min.apply(null, vals));
+    const max = Math.max.apply(null, vals);
+    const top = max === min ? max + 1 : max + (max - min) * 0.1;
+    const n = records.length;
+    const x = (i) => L + (n <= 1 ? (W - L - R) / 2 : i * (W - L - R) / (n - 1));
+    const y = (v) => T + (H - T - B) * (1 - (v - min) / (top - min));
+
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="diff1% and diff2% chart" style="width:100%;height:auto;display:block;font-family:inherit">';
+    for (let g = 0; g <= 4; g++) {
+      const v = min + (top - min) * g / 4, yy = y(v);
+      svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + yy.toFixed(1) + '" y2="' + yy.toFixed(1) + '" stroke="#d5e3e6"/>' +
+             '<text x="' + (L - 6) + '" y="' + (yy + 4).toFixed(1) + '" font-size="11" text-anchor="end" fill="#44575c">' + v.toFixed(1) + '</text>';
+    }
+    [[s1, "#e0702a"], [s2, "#2a7fb8"]].forEach(([arr, color]) => {
+      const pts = [];
+      arr.forEach((v, i) => { if (v !== null) pts.push([x(i), y(v)]); });
+      if (pts.length > 1) {
+        svg += '<polyline fill="none" stroke="' + color + '" stroke-width="2.5" points="' +
+               pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ") + '"/>';
+      }
+      pts.forEach((p) => { svg += '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.6" fill="' + color + '"/>'; });
+    });
+    const step = Math.ceil(n / 10);
+    for (let i = 0; i < n; i += step) {
+      svg += '<text x="' + x(i).toFixed(1) + '" y="' + (H - B + 16) + '" font-size="11" text-anchor="middle" fill="#44575c">#' + (i + 1) + '</text>';
+    }
+    svg += '<rect x="' + L + '" y="' + (H - 16) + '" width="14" height="4" fill="#e0702a"/><text x="' + (L + 20) + '" y="' + (H - 11) + '" font-size="12" fill="#111">diff1%</text>' +
+           '<rect x="' + (L + 90) + '" y="' + (H - 16) + '" width="14" height="4" fill="#2a7fb8"/><text x="' + (L + 110) + '" y="' + (H - 11) + '" font-size="12" fill="#111">diff2%</text>' +
+           '</svg>';
+    box.innerHTML = svg;
+  }
+
+  async function openPet(p) {
+    currentPet = p;
+    $("dUser").textContent = $("pUser").textContent;
+    $("dPhone").textContent = $("pPhone").textContent;
+    $("dAddress").textContent = $("pAddress").textContent;
+
+    // รูปวงกลม + ข้อมูลสัตว์เลี้ยง
+    const ph = $("dPhoto");
+    ph.textContent = "";
+    const paw = () => { ph.textContent = ""; ph.insertAdjacentHTML("beforeend", PAW); };
+    if (p.photo) {
+      const img = document.createElement("img");
+      img.alt = "Photo of " + p.name;
+      img.referrerPolicy = "no-referrer";
+      img.onerror = paw;
+      img.src = p.photo;
+      ph.appendChild(img);
+    } else { paw(); }
+
+    const txt = $("dTxt");
+    txt.textContent = "";
+    [["Pet's Name", p.name], ["Weight", p.weight], ["Underlying Condition", p.condition],
+     ["Drug Allergy", p.allergy], ["Other", p.other]].forEach(([label, value]) => {
+      const line = document.createElement("div");
+      line.textContent = label + ": " + (value || "-");
+      txt.appendChild(line);
+    });
+
+    renderRecords([]);
+    showView("pet");
+    setDStatus("กำลังโหลดข้อมูล...", "loading");
+    try {
+      const res = await jsonp({ action: "pet", username: current.username, phone: current.phone, id: p.id }, 12000);
+      if (!res || !res.ok) throw new Error((res && res.error) || "unknown error");
+      if (currentPet !== p) return; // ผู้ใช้เปลี่ยนหน้าไปแล้ว
+      renderRecords(res.records || []);
+      if (res.hint) setDStatus(res.hint, "warn");
+      else if (!res.records || !res.records.length) setDStatus("ยังไม่มีข้อมูลการวัดของสัตว์เลี้ยงตัวนี้", "warn");
+      else setDStatus("");
+    } catch (e) {
+      setDStatus("โหลดข้อมูลไม่สำเร็จ (" + e.message + ") — ตรวจสอบว่า Deploy Apps Script เป็นเวอร์ชันใหม่แล้ว", "err");
+    }
+  }
+
+  $("dAdd").insertAdjacentHTML("beforeend", PLUS);
+  $("dAdd").addEventListener("click", goAddPet);
+  $("dBack").addEventListener("click", () => { showView("profile"); });
+  $("dRefresh").addEventListener("click", () => { if (currentPet) openPet(currentPet); });
 
   /* ---------- submit ---------- */
   form.addEventListener("submit", async (e) => {
